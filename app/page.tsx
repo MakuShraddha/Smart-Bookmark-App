@@ -66,7 +66,7 @@ export default function Home() {
   async function checkUser() {
     const { data } = await supabase.auth.getUser();
     if (!data.user) {
-      router.push("/profile");
+      router.push("/login");
     } else {
       setUser(data.user);
       fetchBookmarks(data.user.id);
@@ -155,7 +155,7 @@ export default function Home() {
     await supabase.auth.signOut();
     setUser(null);
     setBookmarks([]);
-    router.push("/profile");
+    router.push("/login");
   }
 
   if (!user) return null;

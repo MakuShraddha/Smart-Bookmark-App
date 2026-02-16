@@ -6,29 +6,14 @@ import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
 
-// Recharts dynamic imports for SSR
-const BarChart = dynamic(() =>
-  import("recharts").then((mod) => mod.BarChart),
-  { ssr: false }
-);
-const Bar = dynamic(() =>
-  import("recharts").then((mod) => mod.Bar),
-  { ssr: false }
-);
-const XAxis = dynamic(() =>
-  import("recharts").then((mod) => mod.XAxis),
-  { ssr: false }
-);
-const YAxis = dynamic(() =>
-  import("recharts").then((mod) => mod.YAxis),
-  { ssr: false }
-);
-const Tooltip = dynamic(() =>
-  import("recharts").then((mod) => mod.Tooltip),
-  { ssr: false }
-);
-const ResponsiveContainer = dynamic(() =>
-  import("recharts").then((mod) => mod.ResponsiveContainer),
+// Recharts dynamic imports for SSR safety
+const BarChart = dynamic(() => import("recharts").then((mod) => mod.BarChart), { ssr: false });
+const Bar = dynamic(() => import("recharts").then((mod) => mod.Bar), { ssr: false });
+const XAxis = dynamic(() => import("recharts").then((mod) => mod.XAxis), { ssr: false });
+const YAxis = dynamic(() => import("recharts").then((mod) => mod.YAxis), { ssr: false });
+const Tooltip = dynamic(() => import("recharts").then((mod) => mod.Tooltip), { ssr: false });
+const ResponsiveContainer = dynamic(
+  () => import("recharts").then((mod) => mod.ResponsiveContainer),
   { ssr: false }
 );
 
@@ -53,30 +38,31 @@ export default function Home() {
   const [editId, setEditId] = useState<string | null>(null);
   const [weeklyData, setWeeklyData] = useState<any[]>([]);
   const [darkMode, setDarkMode] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     checkUser();
   }, []);
 
   useEffect(() => {
-    if (user) fetchBookmarks();
+    if (user) fetchBookmarks(user.id);
   }, [user]);
 
-  // Auth check
+  // ✅ Auth Check
   async function checkUser() {
-    const { data } = await supabase.auth.getUser();
-    if (!data.user) {
-      router.push("/");
-    } else {
-      setUser(data.user);
-      fetchBookmarks(data.user.id);
+    const { data, error } = await supabase.auth.getUser();
+
+    if (error || !data.user) {
+      router.push("/login"); // redirect to Google login page
+      return;
     }
+
+    setUser(data.user);
+    setLoading(false);
   }
 
-  // Fetch bookmarks & weekly chart data
-  async function fetchBookmarks(userId?: string) {
-    if (!userId && user) userId = user.id;
-
+  // ✅ Fetch bookmarks
+  async function fetchBookmarks(userId: string) {
     const { data, error } = await supabase
       .from("bookmarks")
       .select("*")
@@ -90,7 +76,7 @@ export default function Home() {
 
     setBookmarks(data || []);
 
-    // Weekly chart calculation
+    // Weekly chart data
     const last7Days: any = {};
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
@@ -101,7 +87,10 @@ export default function Home() {
 
     (data || []).forEach((item) => {
       const created = new Date(item.created_at || "");
-      const diff = (new Date().getTime() - created.getTime()) / (1000 * 60 * 60 * 24);
+      const diff =
+        (new Date().getTime() - created.getTime()) /
+        (1000 * 60 * 60 * 24);
+
       if (diff <= 7) {
         const key = created.toLocaleDateString("en-US", { weekday: "short" });
         if (last7Days[key] !== undefined) last7Days[key]++;
@@ -109,11 +98,14 @@ export default function Home() {
     });
 
     setWeeklyData(
-      Object.keys(last7Days).map((key) => ({ name: key, value: last7Days[key] }))
+      Object.keys(last7Days).map((key) => ({
+        name: key,
+        value: last7Days[key],
+      }))
     );
   }
 
-  // Add or update bookmark
+  // ✅ Add / Update
   async function addOrUpdateBookmark() {
     if (!title || !url || !user) return;
 
@@ -124,18 +116,20 @@ export default function Home() {
         .eq("id", editId);
       setEditId(null);
     } else {
-      await supabase.from("bookmarks").insert([{ title, url, category, user_id: user.id }]);
+      await supabase
+        .from("bookmarks")
+        .insert([{ title, url, category, user_id: user.id }]);
     }
 
     setTitle("");
     setUrl("");
     setCategory("");
-    fetchBookmarks();
+    fetchBookmarks(user.id);
   }
 
   async function deleteBookmark(id: string) {
     await supabase.from("bookmarks").delete().eq("id", id);
-    fetchBookmarks();
+    fetchBookmarks(user.id);
   }
 
   function handleEdit(bookmark: Bookmark) {
@@ -145,20 +139,25 @@ export default function Home() {
     setEditId(bookmark.id);
   }
 
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    router.push("/login");
+  }
+
   const filteredBookmarks = bookmarks.filter(
     (b) =>
       b.title.toLowerCase().includes(search.toLowerCase()) ||
       b.category?.toLowerCase().includes(search.toLowerCase())
   );
 
-  async function handleLogout() {
-    await supabase.auth.signOut();
-    setUser(null);
-    setBookmarks([]);
-    router.push("/");
+  // ✅ Loading screen instead of blank
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <p className="text-xl font-semibold">Checking authentication...</p>
+      </div>
+    );
   }
-
-  if (!user) return null;
 
   return (
     <div
@@ -200,7 +199,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* ADD / EDIT FORM */}
+        {/* FORM */}
         <motion.div
           initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
@@ -214,50 +213,39 @@ export default function Home() {
             <input
               placeholder="Title"
               value={title}
-              onChange={(e) => setTitle(e.target.value || "")}
-              className="p-3 rounded-lg border-2 border-[#5c3a21] font-semibold placeholder:text-[#7a5a3a] focus:ring-2 focus:ring-[#5c3a21]"
+              onChange={(e) => setTitle(e.target.value)}
+              className="p-3 rounded-lg border-2 border-[#5c3a21] font-semibold"
             />
             <input
               placeholder="URL"
               value={url}
-              onChange={(e) => setUrl(e.target.value || "")}
-              className="p-3 rounded-lg border-2 border-[#5c3a21] font-semibold placeholder:text-[#7a5a3a] focus:ring-2 focus:ring-[#5c3a21]"
+              onChange={(e) => setUrl(e.target.value)}
+              className="p-3 rounded-lg border-2 border-[#5c3a21] font-semibold"
             />
             <input
               placeholder="Category"
               value={category}
-              onChange={(e) => setCategory(e.target.value || "")}
-              className="p-3 rounded-lg border-2 border-[#5c3a21] font-semibold placeholder:text-[#7a5a3a] focus:ring-2 focus:ring-[#5c3a21]"
+              onChange={(e) => setCategory(e.target.value)}
+              className="p-3 rounded-lg border-2 border-[#5c3a21] font-semibold"
             />
           </div>
 
           <button
             onClick={addOrUpdateBookmark}
-            className="mt-4 px-6 py-2 border-2 border-[#5c3a21] text-[#5c3a21] font-bold rounded-lg hover:bg-[#5c3a21] hover:text-white transition"
+            className="mt-4 px-6 py-2 border-2 border-[#5c3a21] font-bold rounded-lg"
           >
             {editId ? "Update" : "Add"}
           </button>
         </motion.div>
 
-        {/* SEARCH */}
-        <input
-          placeholder="🔎 Search by title or category..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value || "")}
-          className="w-full md:w-1/2 p-3 rounded-lg border-2 border-[#5c3a21] font-semibold placeholder:text-[#7a5a3a] focus:ring-2 focus:ring-[#5c3a21] mb-8"
-        />
-
-        {/* TOTAL BOOKMARKS */}
-        <motion.div
-          whileHover={{ scale: 1.03 }}
-          className="p-6 rounded-2xl shadow-md border-2 bg-[#fffaf3] border-[#5c3a21] mb-10"
-        >
+        {/* TOTAL */}
+        <div className="mb-10">
           <h2 className="font-bold mb-2">Total Bookmarks</h2>
           <p className="text-3xl font-extrabold">{bookmarks.length}</p>
-        </motion.div>
+        </div>
 
-        {/* WEEKLY CHART */}
-        <motion.div className="p-8 rounded-2xl shadow-md border-2 bg-[#fffaf3] border-[#5c3a21] mb-10">
+        {/* CHART */}
+        <div className="mb-10">
           <h2 className="text-xl font-bold mb-6">Weekly Bookmark Activity</h2>
           <div className="w-full h-64">
             <ResponsiveContainer>
@@ -269,9 +257,9 @@ export default function Home() {
               </BarChart>
             </ResponsiveContainer>
           </div>
-        </motion.div>
+        </div>
 
-        {/* BOOKMARK GRID */}
+        {/* GRID */}
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredBookmarks.map((bookmark) => (
             <motion.div
@@ -279,25 +267,26 @@ export default function Home() {
               whileHover={{ scale: 1.04 }}
               className="bg-[#fffaf3] p-5 rounded-2xl shadow-md border-2 border-[#5c3a21]"
             >
-              <h3 className="font-bold text-[#5c3a21] text-lg mb-2">{bookmark.title}</h3>
+              <h3 className="font-bold mb-2">{bookmark.title}</h3>
               <a
                 href={bookmark.url}
                 target="_blank"
-                className="block text-blue-700 underline font-semibold mb-2 break-words"
+                className="block text-blue-700 underline mb-2 break-words"
               >
                 {bookmark.url}
               </a>
-              <p className="font-semibold text-[#5c3a21] mb-4">📂 {bookmark.category}</p>
+              <p className="mb-4">📂 {bookmark.category}</p>
+
               <div className="flex gap-3">
                 <button
                   onClick={() => handleEdit(bookmark)}
-                  className="px-3 py-1 border-2 border-[#5c3a21] text-[#5c3a21] rounded-lg hover:bg-[#5c3a21] hover:text-white transition font-semibold"
+                  className="px-3 py-1 border-2 rounded-lg"
                 >
                   Edit
                 </button>
                 <button
                   onClick={() => deleteBookmark(bookmark.id)}
-                  className="px-3 py-1 border-2 border-red-600 text-red-600 rounded-lg hover:bg-red-600 hover:text-white transition font-semibold"
+                  className="px-3 py-1 border-2 border-red-600 text-red-600 rounded-lg"
                 >
                   Delete
                 </button>
